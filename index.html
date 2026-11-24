@@ -128,7 +128,7 @@ function oldParseAgenda(raw){
  }
  return {info,items};
 }
-function agendaPanel(){return '<details '+(agendaDraft||agendaPreview||agendaError?'open':'')+'><summary>Import agenda</summary><p class="muted">Copy the entire EasySpeak agenda and paste it below.</p><textarea id="agendaText" rows="5" placeholder="Paste meeting agenda here…" oninput="agendaDraft=this.value;agendaPreview=null;agendaError=\'\';document.getElementById(\'agendaReview\').innerHTML=\'\'">'+esc(agendaDraft)+'</textarea><button class="button wide" onclick="previewAgenda()">Preview agenda</button><div id="agendaReview">'+agendaReview()+'</div></details>'}
+function agendaPanel(){return '<details '+(agendaDraft||agendaPreview||agendaError?'open':'')+'><summary>Import agenda</summary><p class="muted">Copy the entire EasySpeak agenda and paste it below.</p><textarea id="agendaText" onpaste="pasteAgenda(event)" rows="5" placeholder="Paste meeting agenda here…" oninput="agendaDraft=this.value;agendaPreview=null;agendaError=\'\';document.getElementById(\'agendaReview\').innerHTML=\'\'">'+esc(agendaDraft)+'</textarea><button class="button wide" onclick="previewAgenda()">Preview agenda</button><div id="agendaReview">'+agendaReview()+'</div></details>'}
 function oldAgendaReview(){if(agendaError)return '<p class="long">'+esc(agendaError)+'</p>';if(!agendaPreview)return '';let p=agendaPreview;return '<p><strong>'+esc(p.info.date||'Meeting')+'</strong><br>'+esc(p.info.theme)+'</p>'+p.items.map(x=>'<div class="meeting-row"><span><strong>'+esc(x.role)+'</strong><br>'+esc(x.name||'Unassigned')+(x.title?' · '+esc(x.title):'')+'</span><span class="muted">'+range(roles.includes(x.kind)?limits.topics:x.limits||limits[x.kind])+'</span></div>').join('')+'<p class="muted">Import replaces the planned lineup. Existing results are cleared only after confirmation.</p><button class="button wide" onclick="applyAgenda()">Confirm import</button>'}
 function previewAgenda(){agendaDraft=el('agendaText').value;try{agendaPreview=parseAgenda(agendaDraft);agendaError=agendaPreview.items.length?'':'No supported roles found. Copy the full agenda with its table columns.'}catch(e){agendaPreview=null;agendaError='Could not read the agenda. Check the copied format.'}el('agendaReview').innerHTML=agendaReview()}
 function oldApplyAgenda(){if(!agendaPreview?.items.length)return;if(!confirm('Replace the current lineup'+(entries.length?' and clear '+entries.length+' recorded results':'')+'?'))return;let p=agendaPreview;roster={Speakers:[],Evaluators:[],'General Evaluators':[],roles:{}};entries=[];for(let x of p.items){if(roles.includes(x.kind)){roster.roles[x.kind]=x.name;remember(x.name,'Meeting roles')}else{let c=TYPES[x.kind].category;roster[c].push({id:uid(),name:x.name,type:x.kind,title:x.title,limits:x.limits||{...limits[x.kind]}});remember(x.name,c)}}fillAgenda();meetingInfo=p.info;localStorage.setItem('tm-meeting-info',JSON.stringify(meetingInfo));persist();agendaDraft='';agendaPreview=null;agendaError='';setPage('setup')}
@@ -165,10 +165,10 @@ function parseAgenda(raw){
   if(last&&cells.length===3&&cells.every(c=>!c||/^\d+:\d{2}$/.test(c))){last.limits=agendaLimits(cells);if(!last.limits)warnings.push('Check duration: '+last.role);last=null;continue}
   let time='',role='',name='',title='',l=null;
   if(compact){
-   if(cells.length!==3)continue;
-   if(!cells[0]&&cells[1]&&!/\*\*/.test(line)){if(last)last.title=placeholder(cells[1]);continue}
-   if(!/\*\*/.test(line)&&!cells[0])continue;
-   time=cells[0];let m=cells[1].match(/^(.*?)\s+-\s*(.*)$/);if(!m)continue;role=m[1];name=m[2];
+   if(cells.length<2||cells.length>3)continue;
+   let m=(cells[1]||'').match(/^(.*?)\s+[-–—]\s*(.*)$/);
+   if(m&&!/#[0-9]+-[0-9]+/.test(cells[1])&&!/^\*/.test(cells[1])){time=cells[0];role=m[1];name=m[2]}
+   else{if(last&&!cells[0]&&cells[1]&&!/^\*|#[0-9]+-[0-9]+/.test(cells[1]))last.title=placeholder(cells[1]);continue}
   }else{
    if(cells.length<4)continue;
    time=cells[cols.time]||'';role=cells[cols.role]||'';name=cells[cols.name]||'';title=cells[cols.title]||'';
@@ -179,6 +179,30 @@ function parseAgenda(raw){
  }
  return {info,items,warnings};
 }
+
+function clipboardAgenda(html){
+ let doc=new DOMParser().parseFromString(html,'text/html'),out=[];
+ function safe(s){return String(s||'').replace(/\u00a0/g,' ').replace(/\s+/g,' ').trim().replace(/\|/g,'¦')}
+ function walk(node){
+  if(node.nodeType===3){let s=safe(node.textContent);if(s)out.push(s);return}
+  if(node.nodeType!==1)return;
+  if(['SCRIPT','STYLE','NOSCRIPT'].includes(node.tagName))return;
+  if(node.tagName==='TR'){
+   let cells=[...node.cells],nested=cells.some(c=>c.querySelector('table'));
+   if(nested){
+    let vals=cells.map(c=>{let q=c.cloneNode(true);q.querySelectorAll('table').forEach(t=>t.remove());return safe(q.textContent)});
+    if(vals.some(Boolean))out.push('| '+vals.join(' | ')+' |');
+    cells.forEach(c=>{[...c.querySelectorAll('table')].filter(t=>!t.parentElement.closest('table')||t.parentElement.closest('table')===node.closest('table')).forEach(walk)});return;
+   }
+   let vals=cells.map(c=>safe(c.textContent));if(vals.some(Boolean))out.push('| '+vals.join(' | ')+' |');return;
+  }
+  if(node.tagName==='A'&&node.getAttribute('href')?.includes('view_meeting.php')&&safe(node.textContent)){out.push('[**'+safe(node.textContent)+'**]('+node.getAttribute('href')+')');return}
+  if(node.tagName==='B'||node.tagName==='STRONG'){out.push('**'+safe(node.textContent)+'**');return}
+  [...node.childNodes].forEach(walk);
+ }
+ walk(doc.body);return out.join('\n')
+}
+function pasteAgenda(e){let html=e.clipboardData?.getData('text/html'),plain=e.clipboardData?.getData('text/plain')||'';if(!html)return;try{let converted=clipboardAgenda(html),a=parseAgenda(converted),b=parseAgenda(plain);if(a.items.length>=b.items.length&&a.items.length){e.preventDefault();el('agendaText').value=converted;agendaDraft=converted;agendaPreview=null;agendaError='';el('agendaReview').innerHTML=''}}catch{}}
 function placeholder(s){return /^(?:\\?_|\s)+$/.test(s)?'':s.replace(/\\([.])/g,'$1')}
 function repeatMode(x){let k=(x.role+' '+x.title).toLowerCase().normalize('NFD').replace(/\p{M}/gu,'');if(x.kind==='topics'||/evaluat|ertekel|bewerter|avaliador|introduc|introduzion|bemutat|felvezet|einfuhr|chiusura|end of|voting|szavazas|wahl|moderator|coordin|coord\./.test(k)&&! /coord\.\s*discursos de improviso/.test(k))return false;return /table topics?|rogt(o|oe)nzes|stegreifreden|discursos de improviso/.test(k)}
 function individualLimits(x){return x.limits&&x.limits.r<=120&&x.limits.g!==null?{...x.limits}:{...limits.topics}}
@@ -207,7 +231,7 @@ if(page==='orderedEdit')body=orderedEditScreen();
 if(page==='edit'){let x=lookup(editing),k=x?.type||'speech';body='<h1>'+(x?'Edit participant':'Add participant')+'</h1><label class="field">Name</label><input id="editName" list="savedNames" value="'+esc(x?.name||'')+'"><datalist id="savedNames">'+[...new Set(library.map(v=>v.name))].map(n=>'<option value="'+esc(n)+'">').join('')+'</datalist><label class="field">Role</label><select id="editType" onchange="changeEditType()">'+Object.keys(TYPES).filter(v=>v!=='topics').map(v=>'<option value="'+v+'" '+(v===k?'selected':'')+'>'+TYPES[v].label+'</option>').join('')+'</select><details '+(x?'open':'')+'><summary>Time limits</summary><div id="editTimes">'+fields(x?.limits||limits[k])+'</div></details>'+(x?'<label class="field">Position in group</label><input id="editPosition" type="number" min="1" max="'+roster[category(editing)].length+'" value="'+(roster[category(editing)].findIndex(v=>v.id===editing)+1)+'">':'')+'<button class="button wide" onclick="savePerson()">Save participant</button><button class="button ghost wide" onclick="setPage(\'setup\')">Cancel</button>'+(x?'<button class="button danger wide" onclick="removePerson()">Remove participant</button>':'')}
 if(page==='result'){let s=status(finished,activeLimits);body='<div class="center"><p class="muted">Speech completed</p><div class="saveTime">'+format(finished)+'</div><p class="'+s+'">'+({short:'Below minimum',long:'Over time',ok:'Within time limits'}[s])+'</p></div><label class="field">Participant</label><input id="resultName" list="resultNames" value="'+esc(chosen)+'" placeholder="Participant name"><datalist id="resultNames">'+library.filter(x=>x.category===(currentRole()?'Meeting roles':TYPES[type].category)).map(x=>'<option value="'+esc(x.name)+'">').join('')+'</datalist><button class="button wide" onclick="saveResult()">Save & continue</button><button class="button ghost wide" onclick="setPage(\'setup\')">Discard</button>'}
 if(page==='report'){body='<h1>Timer report</h1>'+(orderedAgenda?[...new Set(entries.map(e=>e.category))]:CATS).map(c=>{let g=entries.filter(e=>e.category===c);return g.length?'<section class="meeting-section"><h2>'+c+'</h2>'+g.map(e=>'<div class="meeting-row"><button class="name-button" onclick="renameEntry(\''+esc(e.id)+'\')">'+esc(e.name)+(e.category==='Meeting roles'&&e.name!==e.type?'<small>'+esc(e.type)+'</small>':'')+'</button><b class="'+status(e.seconds,e.limits||limits[e.preset]||limits.speech)+'">'+format(e.seconds)+'</b><button class="icon-button" aria-label="Delete result" onclick="if(confirm(\'Delete result?\'))deleteEntry(\''+esc(e.id)+'\')">×</button></div>').join('')+'</section>':''}).join('')+(entries.length?'':'<p class="muted">No recorded times yet.</p>')+'<button class="button wide" onclick="copyReport()">Copy report</button>'}
-if(page==='share')body=shareScreen();if(page==='receive')body=receiveScreen();if(page==='settings'){body='<h1>Settings</h1><details><summary>Default time limits</summary>'+Object.keys(TYPES).map(k=>'<label class="field">'+TYPES[k].label+'</label>'+fields(limits[k],k)).join('')+'</details><details><summary>Overtime warning · '+overtime+' sec</summary><label class="field">Seconds after red</label><input type="number" min="0" id="overtime" value="'+overtime+'"></details><details><summary>Manage saved participants</summary>'+library.map((x,i)=>'<div class="meeting-row"><span>'+esc(x.name)+' · '+esc(x.category)+'</span><button class="icon-button" onclick="library.splice('+i+',1);persist();render()">×</button></div>').join('')+'</details><button class="button wide" onclick="saveDefaults()">Save settings</button><button class="button ghost wide" onclick="setPage(\'setup\')">Cancel</button><details><summary>Meeting data</summary><button class="button danger wide" onclick="newMeeting()">Start new meeting</button><button class="button ghost wide" onclick="eraseReport()">Clear report only</button><button class="button ghost wide" onclick="resetMeeting()">Clear planned lineup</button></details><p class="muted center">Toastmasters Timer 4.1 · Data stored on this device</p>'}
+if(page==='share')body=shareScreen();if(page==='receive')body=receiveScreen();if(page==='settings'){body='<h1>Settings</h1><details><summary>Default time limits</summary>'+Object.keys(TYPES).map(k=>'<label class="field">'+TYPES[k].label+'</label>'+fields(limits[k],k)).join('')+'</details><details><summary>Overtime warning · '+overtime+' sec</summary><label class="field">Seconds after red</label><input type="number" min="0" id="overtime" value="'+overtime+'"></details><details><summary>Manage saved participants</summary>'+library.map((x,i)=>'<div class="meeting-row"><span>'+esc(x.name)+' · '+esc(x.category)+'</span><button class="icon-button" onclick="library.splice('+i+',1);persist();render()">×</button></div>').join('')+'</details><button class="button wide" onclick="saveDefaults()">Save settings</button><button class="button ghost wide" onclick="setPage(\'setup\')">Cancel</button><details><summary>Meeting data</summary><button class="button danger wide" onclick="newMeeting()">Start new meeting</button><button class="button ghost wide" onclick="eraseReport()">Clear report only</button><button class="button ghost wide" onclick="resetMeeting()">Clear planned lineup</button></details><p class="muted center">Toastmasters Timer 4.2 · Data stored on this device</p>'}
 a.innerHTML=top+body+(['setup','report'].includes(page)?nav:'')}
 document.addEventListener('keydown',e=>{if(page==='signal'&&(e.key==='Escape'||e.key==='Enter'))stop()});render();readSharedMeeting();
 </script><script>/*
