@@ -49,7 +49,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid 
 .neutral-brand .club-name{margin-top:22px;font-size:clamp(24px,4vw,44px);line-height:1.2;font-weight:800;text-align:center;color:#fff;max-width:min(90vw,1000px);text-wrap:balance}
 .signal.overtime-red{background:#e22929}
 .signal.overtime-black{background:#000}
-</style><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icon-192.png"><meta name="apple-mobile-web-app-capable" content="yes"></head><body><main id="app"></main><script>
+</style><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="logo.png"><meta name="apple-mobile-web-app-capable" content="yes"></head><body><main id="app"></main><script>
 const TYPES={speech:{label:'Prepared Speech',category:'Speakers',g:300,y:360,r:420},ice:{label:'Ice Breaker',category:'Speakers',g:240,y:300,r:360},eval:{label:'Evaluation',category:'Evaluators',g:120,y:150,r:180},topics:{label:'Table Topics',category:'Table Topics',g:60,y:90,r:120},general:{label:'General Evaluation',category:'General Evaluators',g:120,y:150,r:180}};
 const CATS=['Speakers','Evaluators','Table Topics','General Evaluators'];
 const store=(key,fallback)=>{try{let v=JSON.parse(localStorage.getItem(key));return v??fallback}catch{return fallback}};
