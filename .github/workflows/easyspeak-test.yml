@@ -1,0 +1,53 @@
+name: EasySpeak connectivity test
+on:
+  push:
+    paths:
+      - '.github/workflows/easyspeak-test.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Check public agenda without credentials
+        shell: bash
+        run: |
+          python - <<'PY'
+          import urllib.request, urllib.error, re
+          from html.parser import HTMLParser
+          url = 'https://tmclub.eu/viewagenda.php?t=253262&pr=1'
+          class Parser(HTMLParser):
+              def __init__(self):
+                  super().__init__()
+                  self.parts=[]
+                  self.rows=0
+              def handle_starttag(self, tag, attrs):
+                  if tag=='tr': self.rows+=1
+              def handle_data(self, data):
+                  self.parts.append(data)
+          try:
+              req=urllib.request.Request(url,headers={'User-Agent':'ToastmastersTimer connectivity test/1.0'})
+              with urllib.request.urlopen(req,timeout=25) as response:
+                  print('HTTP status:',response.status)
+                  print('Content type:',response.headers.get_content_type())
+                  print('CORS:',response.headers.get('Access-Control-Allow-Origin','absent'))
+                  raw=response.read(2000000)
+                  print('Response bytes:',len(raw))
+                  p=Parser()
+                  p.feed(raw.decode(response.headers.get_content_charset() or 'utf-8',errors='replace'))
+                  text=' '.join(' '.join(p.parts).lower().split())
+                  print('Table rows:',p.rows)
+                  checks={k:bool(re.search(v,text)) for k,v in {'Speaker':r'\bspeaker\b','Evaluator':r'\bevaluator\b','Grammarian':r'\bgrammarian\b','Table Topics':r'table topics?','Duration':r'\d+:\d{2}\s+\d+:\d{2}','Presenter heading':r'\bpresenter\b'}.items()}
+                  for k,v in checks.items(): print(k+':',v)
+                  ok=all(checks.values()) and p.rows>5
+                  print('AGENDA_STRUCTURE_FOUND:',ok)
+                  if not ok: raise SystemExit(2)
+          except urllib.error.HTTPError as e:
+              print('HTTP status:',e.code)
+              raise SystemExit(1)
+          except urllib.error.URLError as e:
+              print('Network error type:',type(e.reason).__name__)
+              raise SystemExit(1)
+          PY
